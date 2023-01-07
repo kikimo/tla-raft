@@ -16,6 +16,8 @@ CONSTANT Follower, Candidate, Leader
 ASSUME /\ MaxElection \in Nat
        /\ Servers # {}
 
+symmServers == Permutations(Servers)
+
 \* Variables definition
 VARIABLE votedFor
 
@@ -423,5 +425,5 @@ Inv ==
 
 =============================================================================
 \* Modification History
-\* Last modified Sat Jan 07 10:51:52 CST 2023 by wenlinwu
+\* Last modified Sat Jan 07 11:39:28 CST 2023 by wenlinwu
 \* Created Sat Jan 07 09:20:39 CST 2023 by wenlinwu
