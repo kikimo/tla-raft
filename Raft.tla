@@ -9,7 +9,7 @@ CONSTANT VoteReq, VoteResp, AppendReq, AppendResp
 
 CONSTANT None
 
-CONSTANT MaxElection, MaxLogSize
+CONSTANT MaxElection, MaxLogSize, MaxRestart
 
 CONSTANT Follower, Candidate, Leader
 
@@ -38,6 +38,7 @@ VARIABLE logs
 
 \* ausialary variable
 VARIABLE electionCount
+VARIABLE restartCount
 
 MajoritySize == Cardinality(Servers) \div 2 + 1
 
@@ -93,6 +94,7 @@ Init ==
   /\ nextIndex = [ s \in Servers |-> [ t \in Servers |-> 2 ] ]
   /\ commitIndex = [ s \in Servers |-> 1 ]
   /\ electionCount = 0
+  /\ restartCount = 0
   /\ msgs = {}
 
 BecomeCandidate(s) == 
@@ -118,7 +120,7 @@ BecomeCandidate(s) ==
      IN
        \* cast votes in one shot
        /\ msgs' = msgs \union voteReqs
-       /\ UNCHANGED <<logs, Indexes>>
+       /\ UNCHANGED <<logs, Indexes, restartCount>>
 
 ResponseVote(s) == 
   /\ role[s] = Follower
@@ -137,14 +139,13 @@ ResponseVote(s) ==
             \/ /\ m.lastLogTerm = lastLogTerm                                                        
                /\ m.lastLogIndex >= lastLogIndex                                                     
        /\ LET                                                                                        
-            gm == [ dst |-> m.src, src |-> s, term |-> m.term, type |-> VoteResp ]                   
-          IN                                                                                         
+            gm == [ dst |-> m.src, src |-> s, term |-> m.term, type |-> VoteResp ]
+          IN
             /\ gm \notin msgs
             \* /\ Print({gm}, TRUE)
-            /\ SendMsg(gm)                                                                           
-            /\ votedFor' = [ votedFor EXCEPT ![s] = m.src ]                                          
-            /\ UNCHANGED <<currentTerm, role, logs, Indexes, electionCount>>
-
+            /\ SendMsg(gm)
+            /\ votedFor' = [ votedFor EXCEPT ![s] = m.src ]
+            /\ UNCHANGED <<currentTerm, role, logs, Indexes, electionCount, restartCount>>
 
 BecomeLeader(s) ==
   /\ role[s] = Candidate
@@ -160,7 +161,7 @@ BecomeLeader(s) ==
        /\ nextIndex' = [ nextIndex EXCEPT ![s] = [ u \in Servers |-> Len(logs[s])+1 ] ]
        \* /\ Print(resps, TRUE)
        \* /\ Print({role', currentTerm, votedFor}, TRUE)
-       /\ UNCHANGED <<currentTerm, votedFor, msgs, logs, commitIndex, electionCount>>
+       /\ UNCHANGED <<currentTerm, votedFor, msgs, logs, commitIndex, electionCount, restartCount>>
        \* /\ Print([IsLeader |-> s, term |-> currentTerm[s]], TRUE)
 
 FollowerUpdateTerm(s) ==
@@ -169,7 +170,7 @@ FollowerUpdateTerm(s) ==
        /\ m.term > currentTerm[s]
        /\ m.dst = s
        /\ currentTerm' = [ currentTerm EXCEPT ![s] = m.term ]
-       /\ UNCHANGED <<votedFor, msgs, role, logs, Indexes, electionCount>>
+       /\ UNCHANGED <<votedFor, msgs, role, logs, Indexes, electionCount, restartCount>>
 
 CandidateToFollower(s) ==
   /\ role[s] = Candidate
@@ -179,12 +180,12 @@ CandidateToFollower(s) ==
           /\ currentTerm' = [ currentTerm EXCEPT ![s] = m.term ]
           /\ role' = [ role EXCEPT ![s] = Follower ]
           /\ votedFor' = [ votedFor EXCEPT ![s] = None ]
-          /\ UNCHANGED <<msgs, logs, Indexes, electionCount>>
+          /\ UNCHANGED <<msgs, logs, Indexes, electionCount, restartCount>>
        \/ /\ m.term = currentTerm[s]
           /\ m.dst = s
           /\ m.type = AppendReq
           /\ role' = [ role EXCEPT ![s] = Follower ]
-          /\ UNCHANGED <<votedFor, currentTerm, msgs, logs, Indexes, electionCount>>
+          /\ UNCHANGED <<votedFor, currentTerm, msgs, logs, Indexes, electionCount, restartCount>>
 
 LeaderToFollower(s) ==
   /\ role[s] = Leader
@@ -195,7 +196,7 @@ LeaderToFollower(s) ==
        /\ currentTerm' = [ currentTerm EXCEPT ![s] = m.term ]
        /\ role' = [ role EXCEPT ![s] = Follower ]
        /\ votedFor' = [ votedFor EXCEPT ![s] = None ]
-       /\ UNCHANGED <<msgs, logs, Indexes, electionCount>>
+       /\ UNCHANGED <<msgs, logs, Indexes, electionCount, restartCount>>
 
 \* FIXME
 BecomeFollower(s) == 
@@ -208,7 +209,7 @@ ClientReq(s) ==
   /\ Len(logs[s]) < MaxLogSize
   /\ logs' = [ logs EXCEPT ![s] = Append(logs[s], [ term |-> currentTerm[s], val |-> None ]) ]
   /\ matchIndex' = [ matchIndex EXCEPT ![s][s] = Len(logs[s]) + 1 ]
-  /\ UNCHANGED <<currentTerm, votedFor, msgs, role, commitIndex, nextIndex, electionCount>>
+  /\ UNCHANGED <<currentTerm, votedFor, msgs, role, commitIndex, nextIndex, electionCount, restartCount>>
 
 LeaderAppendEntry(s) ==
   /\ role[s] = Leader
@@ -233,7 +234,7 @@ LeaderAppendEntry(s) ==
           IN
             /\ m \notin msgs
             /\ SendMsg(m)
-            /\ UNCHANGED <<Indexes, currentTerm, votedFor, role, logs, electionCount>>
+            /\ UNCHANGED <<Indexes, currentTerm, votedFor, role, logs, electionCount, restartCount>>
 
 IsLogMatch(s, m) ==
   /\ m.prevLogIndex <= Len(logs[s])
@@ -270,10 +271,10 @@ FollowerAppendEntry(s) ==
                    /\ SendMsg(resp)
                    /\ logs' = [ logs EXCEPT ![s] = newLog ]
                    \* /\ Print([ msg |-> m, logs |-> logs[s], entries |-> m.entries, newLog |-> newLog ], TRUE)
-                   /\ UNCHANGED <<nextIndex, matchIndex, currentTerm, votedFor, role, electionCount>>
+                   /\ UNCHANGED <<nextIndex, matchIndex, currentTerm, votedFor, role, electionCount, restartCount>>
                  ELSE
                    /\ SendMsg(resp)
-                   /\ UNCHANGED <<nextIndex, matchIndex, currentTerm, votedFor, role, logs, electionCount>>
+                   /\ UNCHANGED <<nextIndex, matchIndex, currentTerm, votedFor, role, logs, electionCount, restartCount>>
           ELSE
             LET
               resp == [
@@ -287,7 +288,7 @@ FollowerAppendEntry(s) ==
             IN
               /\ resp \notin msgs
               /\ SendMsg(resp)
-              /\ UNCHANGED <<Indexes, currentTerm, votedFor, role, logs, electionCount>>
+              /\ UNCHANGED <<Indexes, currentTerm, votedFor, role, logs, electionCount, restartCount>>
 
 \* leader handle append response
 HandleAppendResp(s) ==
@@ -301,7 +302,7 @@ HandleAppendResp(s) ==
          /\ matchIndex' = [ matchIndex EXCEPT ![s][m.src] = m.prevLogIndex ]
          /\ nextIndex' = [ nextIndex EXCEPT ![s][m.src] = m.prevLogIndex + 1 ]
          \* TODO commit entry if possible
-         /\ UNCHANGED <<currentTerm, votedFor, role, msgs, commitIndex, logs, electionCount>>
+         /\ UNCHANGED <<currentTerm, votedFor, role, msgs, commitIndex, logs, electionCount, restartCount>>
        ELSE
          \* enabling condition
          /\ m.prevLogIndex + 2 = nextIndex[s][m.src]
@@ -309,7 +310,7 @@ HandleAppendResp(s) ==
          /\ nextIndex[s][m.src] # m.prevLogIndex + 1
          \* /\ Assert(m.prevLogIndex + 1 > matchIndex[s][m.src], {s, m, matchIndex[s], nextIndex[s]})
          /\ nextIndex' = [ nextIndex EXCEPT ![s][m.src] = m.prevLogIndex + 1 ]
-         /\ UNCHANGED <<currentTerm, votedFor, role, msgs, commitIndex, matchIndex, logs, electionCount>>
+         /\ UNCHANGED <<currentTerm, votedFor, role, msgs, commitIndex, matchIndex, logs, electionCount, restartCount>>
 
 LeaderCanCommit(s) ==
   /\ role[s] = Leader
@@ -319,10 +320,12 @@ LeaderCanCommit(s) ==
        /\ median > commitIndex[s]
        \* /\ Print({s, currentTerm[s], median}, TRUE)
        /\ commitIndex' = [ commitIndex EXCEPT ![s] = median ]
-       /\ UNCHANGED <<currentTerm, votedFor, role, msgs, logs, matchIndex, nextIndex, electionCount>>
+       /\ UNCHANGED << currentTerm, votedFor, role, msgs, logs, matchIndex, nextIndex, electionCount, restartCount >>
 
 Restart(s) ==
   /\ role[s] = Leader
+  /\ restartCount < MaxRestart
+  /\ restartCount' = restartCount + 1
   /\ role' = [ role EXCEPT ![s] = Follower ]
   /\ UNCHANGED << votedFor, currentTerm, msgs, matchIndex, nextIndex, commitIndex, logs, electionCount>>
 
